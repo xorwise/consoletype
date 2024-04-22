@@ -5,20 +5,21 @@ import (
 	"log"
 	"os"
 
-	// "github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/xorwise/wpm/input"
+	"github.com/xorwise/wpm/text"
 	"golang.org/x/term"
 )
 
 type model struct {
 	textInput input.Model
+	lang      string
 }
 
-func initialModel() model {
+func initialModel(lang string) model {
 	ti := input.New()
-	words := input.StringToWords("banana apple car house sky tree book dog cat moon sun road river beach park tree chair table lamp bed pillow window door floor wall ceiling rug carpet sofa chair shelf curtain plant flower vase clock mirror towel soap shampoo brush toothpaste toothbrush razor scissors")
+	words := input.StringToWords(text.GenerateText(lang, 100))
 	ti.Text = words
 	ti.Focus()
 	ti.Width = 70
@@ -27,7 +28,7 @@ func initialModel() model {
 	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("gray"))
 	ti.SetFirstWord()
 
-	return model{textInput: ti}
+	return model{textInput: ti, lang: lang}
 }
 
 func (m model) Init() tea.Cmd {
@@ -43,6 +44,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter, tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyTab:
+			m = initialModel(m.lang)
 			return m, nil
 		}
 	}
@@ -50,7 +52,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	physicalWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	physicalWidth, physicalHeight, _ := term.GetSize(int(os.Stdout.Fd()))
 	title := lipgloss.NewStyle().
 		Width(physicalWidth).
 		Align(lipgloss.Center).
@@ -60,18 +62,25 @@ func (m model) View() string {
 		Align(lipgloss.Center).
 		MarginBottom(10).
 		Render(m.textInput.View())
-	return lipgloss.JoinVertical(lipgloss.Top, title, text)
+
+	return lipgloss.NewStyle().
+		Width(physicalWidth).
+		Height(physicalHeight).
+		Render(
+			lipgloss.JoinVertical(lipgloss.Top, title, text),
+		)
 
 }
 
 func main() {
+	lang := os.Args[1]
 	f, err := os.OpenFile("wpm.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
 	defer f.Close()
 	log.SetOutput(f)
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+	p := tea.NewProgram(initialModel(lang), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
