@@ -73,7 +73,12 @@ func (m model) View() string {
 }
 
 func main() {
-	lang := os.Args[1]
+	var lang string
+	if len(os.Args) < 2 {
+		lang = "en"
+	} else {
+		lang = os.Args[1]
+	}
 	f, err := os.OpenFile("wpm.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)

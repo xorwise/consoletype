@@ -33,6 +33,7 @@ type Model struct {
 	currentWordIndex     int
 	currentWordCorrect   []int
 	currentWordIncorrect []int
+	indexes              []int
 	wpm                  int
 	finishedWords        int
 	stopwatch            stopwatch.Model
@@ -67,9 +68,21 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
+func (m *Model) calcIndexes() {
+	base := ""
+	for i, w := range m.Text {
+		if uniseg.StringWidth(base) > m.Width {
+			base = ""
+			m.indexes = append(m.indexes, i-1)
+		}
+		base += string(w.Value) + " "
+	}
+}
+
 func (m *Model) SetFirstWord() {
 	m.word = Word{Value: make([]rune, len(m.Text[0].Value)), pos: 0}
 	copy(m.word.Value, m.Text[0].Value)
+	m.calcIndexes()
 }
 
 func (m *Model) styleWord(w Word, mistakes []int) string {
@@ -117,7 +130,7 @@ func (m *Model) handleRunes(msg tea.KeyMsg) {
 
 func (m *Model) handleBackspace() {
 	isFinishedWord := m.word.pos == len(m.word.Value) && len(m.currentWordIncorrect) == 0
-	if m.word.pos == 0 || isFinishedWord {
+	if isFinishedWord || m.word.pos == 0 {
 		return
 	}
 	if m.word.pos > len(m.Text[m.currentWordIndex].Value) {
@@ -174,30 +187,12 @@ func StringToWords(s string) []*Word {
 }
 
 func (m Model) View() string {
-	styleText := m.TextStyle.Inline(true).Render
-
 	v := ""
-	currentWordPos := 0
-	for i, word := range m.Text {
-		if i < m.currentWordIndex {
-			v += m.finishedText[i]
-			v += styleText(" ")
-		} else if i == m.currentWordIndex {
-			currentWordValue := lipgloss.StyleRunes(string(m.word.Value[:m.word.pos]), m.currentWordIncorrect, m.MistakeStyle.Inline(true), m.ValueStyle.Inline(true))
-			if m.word.pos < len(word.Value) {
-				currentWordValue += m.TextStyle.Inline(true).Background(lipgloss.Color("#6C27D8")).Render(string(word.Value[m.word.pos]))
-			}
-			if m.word.pos+1 < len(word.Value) {
-				currentWordValue += styleText(string(word.Value[m.word.pos+1:]))
-			}
-			v += currentWordValue
-			currentWordPos = len(v)
-			v += styleText(" ")
-		} else {
-			v += styleText(string(word.Value))
-			v += styleText(" ")
-		}
-	}
+	v += m.viewWritten()
+
+	v += m.viewCurrentWord()
+	currentWordPos := len(v)
+	v += m.viewRemaining()
 
 	styled := lipgloss.JoinVertical(
 		lipgloss.Top,
@@ -209,42 +204,70 @@ func (m Model) View() string {
 	return styled
 }
 
-func (m *Model) handleOverflow(s string, pos int) string {
-	base := ""
-	indexes := []int{}
-	for i, w := range m.Text {
-		if uniseg.StringWidth(base) > m.Width {
-			base = ""
-			indexes = append(indexes, i-1)
-		}
-		base += string(w.Value)
+func (m *Model) viewWritten() string {
+	s := ""
+	for i := 0; i < len(m.finishedText); i++ {
+		s += m.TextStyle.Inline(true).Render(m.finishedText[i])
+		s += m.TextStyle.Inline(true).Render(" ")
 	}
+	return s
+}
+
+func (m *Model) viewCurrentWord() string {
+	s := lipgloss.StyleRunes(string(m.word.Value[:m.word.pos]), m.currentWordIncorrect, m.MistakeStyle.Inline(true), m.ValueStyle.Inline(true))
+
+	if m.word.pos <= len(m.Text[m.currentWordIndex].Value) {
+		if m.word.pos == len(m.Text[m.currentWordIndex].Value) {
+			if !slices.Contains(m.indexes, m.currentWordIndex) {
+				s += m.TextStyle.Inline(true).Background(lipgloss.Color("#6C27D8")).Render(" ")
+			} else {
+				s += m.TextStyle.Inline(true).Render(" ")
+			}
+		} else {
+			s += m.TextStyle.Inline(true).Background(lipgloss.Color("#6C27D8")).Render(string(m.Text[m.currentWordIndex].Value[m.word.pos]))
+			if m.word.pos+1 == len(m.Text[m.currentWordIndex].Value) {
+				s += m.TextStyle.Inline(true).Render(" ")
+			}
+		}
+	}
+	if m.word.pos+1 < len(m.Text[m.currentWordIndex].Value) {
+		s += m.TextStyle.Inline(true).Render(string(m.Text[m.currentWordIndex].Value[m.word.pos+1:]))
+		s += m.TextStyle.Inline(true).Render(" ")
+	}
+	return s
+}
+
+func (m *Model) viewRemaining() string {
+	s := ""
+	for i := m.currentWordIndex + 1; i < len(m.Text); i++ {
+		s += m.TextStyle.Inline(true).Render(string(m.Text[i].Value))
+		s += m.TextStyle.Inline(true).Render(" ")
+	}
+	return s
+}
+
+func (m *Model) handleOverflow(s string, pos int) string {
 	words := strings.Split(s, " ")
 	rows := []string{""}
 
 	j := 0
 	for i, w := range words {
-		if j < len(indexes) && i == indexes[j] {
+		if j < len(m.indexes) && i == m.indexes[j]+1 {
 			rows = append(rows, "")
 			j++
 		}
 		rows[len(rows)-1] += w + m.TextStyle.Render(" ")
 	}
 
-	count := 0
-	start := 0
-	end := len(rows)
+	count, start, end := 0, 0, len(rows)
 	for i, row := range rows {
-		if pos > count && pos < count+len(row) {
+		if pos >= count && pos <= count+len(row) {
 			if i == 0 {
-				start = 0
-				end = 3
+				start, end = 0, 3
 			} else if i == len(rows)-1 {
-				start = len(rows) - 3
-				end = len(rows)
+				start, end = len(rows)-3, len(rows)
 			} else {
-				start = i - 1
-				end = i + 2
+				start, end = i-1, i+2
 			}
 		}
 		count += len(row)
